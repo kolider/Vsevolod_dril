@@ -1,3 +1,11 @@
+/*
+ * Крайні зміни були у основному циклі замінені 
+ * умовні блоки на підцикли по режимам. Також 
+ * замінені у ф-ції підрахунку лічильника
+ * важкі обрахунки на XOR з бінарними флагами
+ * замість порівняння парності змінних типу int8_t
+ */
+
 #include <LiquidCrystal_I2C.h>
 #include <EEPROM.h>
 
@@ -16,173 +24,23 @@ uint8_t Count_modes[] = {65, 45, 10};
 #define RELAY_ON LOW
 #define BTN_DELAY 80
 
-//Далі не змінювати
-#define __GETBIT(a, b) (a & (1<<b))
-#define __SETBIT(a, b) (a |= (1<<b))
-#define __CLEARBIT(a, b) (a &= ~(1<<b))
-#define __TOGGLEBIT(a, b) (a ^= (1<<b))
-#define __RUNNING 0
-#define __NEXTOPERATION 1
-#define __LASTHALL 2
-#define ISRUN(a) __GETBIT(a, __RUNNING)
-#define SETRUN(a) (__SETBIT (a, __RUNNING))
-#define SETSTOP(a) (__CLEARBIT (a, __RUNNING))
-#define GETHALL(a) __GETBIT(a, __LASTHALL)
-#define SETHALL1(a) (__SETBIT (a, __LASTHALL))
-#define HALL1 1
-#define SETHALL2(a) (__CLEARBIT (a, __LASTHALL))
-#define HALL2 0
-#define TOGGLEDIRECTION(a) (__TOGGLEBIT (a, __DIRECTION))
-#define GETOPERATION(a) __GETBIT(a, __NEXTOPERATION)
-#define SETOPERATION(a) __SETBIT(a, __NEXTOPERATION)
-#define TOGGLEOPERATION(a) (__TOGGLEBIT (a, __NEXTOPERATION))
+#define STANDBY 0
+#define RUN 1
+#define PAUSE 2
+#define DONE 3
 
+#define DIRECT true
+#define REVERS !DIRECT
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 uint8_t Desired_value = 0;
-volatile uint8_t Count = 0;
-volatile byte Status = 0;
+int16_t Count = 0;
+volatile bool Hall1 = false;
+volatile bool Hall2 = false;
+volatile int8_t TriggerHall = 0;
+uint8_t Mode = STANDBY;
+int8_t MasterHall = 0;
 
-void setup() {
-   lcd.init();
-   lcd.backlight();
-   lcd.print("Loading");
-     
-   pinMode(RELAY_PIN, OUTPUT);   
-   pinMode(HALL_SENS1_PIN , INPUT);
-   pinMode(HALL_SENS2_PIN , INPUT);
-   pinMode(PLAYPAUSE_BTN_PIN, INPUT);
-   pinMode(COUNT1_BTN_PIN, INPUT);
-   pinMode(COUNT2_BTN_PIN, INPUT);
-   pinMode(COUNT3_BTN_PIN, INPUT);
-
-   SETHALL1(Status);
-   SETOPERATION(Status);
-   turnOffRelay();
-
-   getModesEEPROM();
-   
-   attachInterrupt( digitalPinToInterrupt(HALL_SENS1_PIN), hall1Handler, RISING);
-   attachInterrupt( digitalPinToInterrupt(HALL_SENS2_PIN), hall2Handler, RISING);
-
-   delay(250);
-   if (isPressed(PLAYPAUSE_BTN_PIN) ){
-    setupMode();
-   }
-   
-   lcdStartup();
-}
-
-void loop() {
-  if (ISRUN(Status)) { // У режимі роботи можемо тільки зупиняти
-    onRunning();
-    if (Count == 0) SETOPERATION(Status); // При відкручуванні назад і при "0" робимо наступні операцію додавання
-    if ( isPressed(PLAYPAUSE_BTN_PIN) ){
-      pauseMode();
-    }
-  }else { // У режимі очікування опитуємо всі кнопки
-    if ( isPressed(PLAYPAUSE_BTN_PIN) ){
-      afterPauseMode();
-    }else if ( isPressed(COUNT1_BTN_PIN) ){
-      startMode(Count_modes[0]);
-    }else if ( isPressed(COUNT2_BTN_PIN) ){
-      startMode(Count_modes[1]);
-    }else if ( isPressed(COUNT3_BTN_PIN) ){
-      startMode(Count_modes[2]);
-    }
-//    if ( !ISRUN(Status) && Desired_value ){
-//      refreshCounts();
-//    }
-  }
-
-}
-
-void hall1Handler(){ 
-  if ( GETHALL(Status) == HALL1 ){
-    TOGGLEOPERATION(Status);
-  }
-  GETOPERATION(Status) ?  Count++ : Count--;
-  SETHALL1(Status);
-}
-void hall2Handler(){
-  if ( GETHALL(Status) == HALL2 ){
-    TOGGLEOPERATION(Status);
-  }
-//  GETOPERATION(Status) ?  Count++ : Count--;
-  SETHALL2(Status);  
-}
-
-void onRunning(){
-  if (Count >= Desired_value){
-    done(Desired_value);
-  }else{
-    refreshCounts();
-  }
-}
-
-void refreshCounts(){
-  uint8_t pos = 10;
-  pos -= log10(Count);
-  lcd.setCursor(pos,0);
-  lcd.print(Count);
-  
-}
-
-void startMode(uint8_t count){
-  Count = 0;
-  lcd.clear();
-  lcd.print("RUNNING ");
-//  lcd.setCursor(3,1);
-//  lcd.print("  0/");
-//  lcd.print(count);
-  showStopBtnOnly();
-  
-  Desired_value = count;
-  SETRUN(Status);
-  turnOnRelay();
-}
-
-void showStopBtnOnly(){
-  lcd.setCursor(0,1);
-  lcd.print("           Stop");
-}
-
-void pauseMode(){
-  turnOffRelay();
-  SETSTOP(Status);
-  lcd.clear();
-  lcd.print("PAUSE  ");
-  showButtons();
-  delay(700);
-}
-
-void done(uint8_t value){
-  turnOffRelay(); 
-  SETSTOP(Status);
-  lcd.setCursor(0,0);
-  lcd.print(" DONE   ");
-  lcd.print(value);
-  lcd.print("/");
-  lcd.print(Desired_value);
-  showButtons();
-}
-
-void afterPauseMode(){
-  if (Desired_value > Count){
-    lcd.home();
-    lcd.print("RUNNING");
-    showButtons();
-    delay(400);
-    SETRUN(Status);
-    turnOnRelay();
-  }
-}
-
-void lcdStartup(){
-  lcd.clear();
-  lcd.print("Already to work");
-  showButtons();
-}
 
 void showButtons(){
   lcd.setCursor(0,1);
@@ -191,14 +49,209 @@ void showButtons(){
   lcd.print(Count_modes[1]);
   lcd.print(" ");
   lcd.print(Count_modes[2]);
-  if (Desired_value > 0){
-    lcd.setCursor(11,1);
-    if (ISRUN(Status)){
-      lcd.print("Pause");
-    }else{
-      lcd.print("RUN  ");
+  lcd.setCursor(12,1);
+  if (Mode == RUN){
+    lcd.print("Stop");
+  }else if (Mode == PAUSE){
+    lcd.print(" RUN");
+  }else{
+    lcd.print("    ");
+  }
+}
+
+void showStopBtnOnly(){
+  lcd.setCursor(0,1);
+  lcd.print("            Stop");
+}
+
+void refreshCounts(){
+  int8_t pos = (int)log10(Count);
+  lcd.setCursor(8,0);
+  lcd.print("   ");
+  lcd.setCursor(11-pos,0);
+  lcd.print(Count);
+}
+
+void lcdStartup(){
+  lcd.clear();
+  lcd.print("Already to work");
+  showButtons();
+}
+
+void startMode(uint8_t count){
+  MasterHall = Count = 0;
+  Hall1 = Hall2 = false;
+  lcd.clear();
+  lcd.print("RUNNING ");
+  refreshCounts();
+  lcd.setCursor(12,0);
+  lcd.print("/");
+  lcd.print(count);
+  showStopBtnOnly();
+  
+  Desired_value = count;
+  Mode = RUN;
+  turnOnRelay();
+}
+
+void pauseMode(){
+  turnOffRelay();
+  Mode = PAUSE;
+  lcd.home();
+  lcd.print("PAUSE  ");
+  showButtons();
+  while(isPressed(PLAYPAUSE_BTN_PIN)){
+    if (isNewCounters()){
+      refreshCounts();
     }
   }
+}
+
+void afterPauseMode(){
+  if (Desired_value > Count){
+    lcd.home();
+    lcd.print("RUNNING");
+    Mode = RUN;
+    showStopBtnOnly();
+    while(isPressed(PLAYPAUSE_BTN_PIN)){
+      if (isNewCounters()){
+        refreshCounts();
+      }
+    }
+    turnOnRelay();
+  }
+}
+
+void done(uint8_t value){
+  turnOffRelay(); 
+  Mode = DONE;
+  lcd.home();
+  lcd.print("DONE   ");
+  showButtons();
+}
+
+void checkSelectMode(){
+    if ( isPressed(COUNT1_BTN_PIN) ){
+      startMode(Count_modes[0]);
+    }else if ( isPressed(COUNT2_BTN_PIN) ){
+      startMode(Count_modes[1]);
+    }else if ( isPressed(COUNT3_BTN_PIN) ){
+      startMode(Count_modes[2]);
+    }
+}
+
+void setup() {
+   lcd.init();
+   lcd.backlight();
+   lcd.print("Loading");
+     
+   pinMode(RELAY_PIN, OUTPUT);   
+   pinMode(HALL_SENS1_PIN, INPUT);
+   pinMode(HALL_SENS2_PIN, INPUT);
+   pinMode(PLAYPAUSE_BTN_PIN, INPUT);
+   pinMode(COUNT1_BTN_PIN, INPUT);
+   pinMode(COUNT2_BTN_PIN, INPUT);
+   pinMode(COUNT3_BTN_PIN, INPUT);
+
+   turnOffRelay();
+
+   getModesEEPROM();
+
+   delay(250);
+   if (isPressed(PLAYPAUSE_BTN_PIN) ){
+    setupMode();
+   }
+
+   attachInterrupt( digitalPinToInterrupt(HALL_SENS1_PIN), hall1Handler, RISING);
+   attachInterrupt( digitalPinToInterrupt(HALL_SENS2_PIN), hall2Handler, RISING);
+   
+   lcdStartup();
+}
+
+void loop() {
+  while (Mode == RUN) { // У режимі роботи можемо тільки зупиняти
+    if (Count >= Desired_value){
+      done(Desired_value);
+    }
+    if ( isPressed(PLAYPAUSE_BTN_PIN) ){
+      pauseMode();
+    }
+    if (isNewCounters()){
+      refreshCounts();
+    }
+  }
+  while (Mode == DONE) { //Mode DONE
+    if (isNewCounters()){
+      refreshCounts();
+    }
+    checkSelectMode();
+    if ( isPressed(PLAYPAUSE_BTN_PIN) ){
+      Count=0;
+      MasterHall = 0; 
+      Hall1 = Hall2 = false;
+      refreshCounts();
+    }
+  }
+  while (Mode == PAUSE){ // У режимі очікування опитуємо всі режими і плей
+    if ( Count >= Desired_value ) done(Desired_value);
+    if ( isPressed(PLAYPAUSE_BTN_PIN) ){
+      afterPauseMode();
+    }
+    if (isNewCounters()){
+      refreshCounts();
+    }
+    checkSelectMode();
+  }
+  while (Mode == STANDBY) { // Mode STANDBY
+    if (!Desired_value && Count){
+        lcd.clear();
+        refreshCounts();
+        showButtons();
+        Desired_value = 1;
+    }
+    if (isNewCounters()){
+      refreshCounts();
+    }
+    checkSelectMode();
+  }
+  
+}
+
+void hall1Handler(){ 
+  Hall1=!Hall1;
+  TriggerHall =1;
+}
+void hall2Handler(){
+  // CountHall2++;
+  Hall2=!Hall2;
+  TriggerHall =2;
+}
+
+bool isNewCounters(){
+    if (!TriggerHall) return false;
+    if (!MasterHall){
+        MasterHall = TriggerHall;
+        TriggerHall=0;
+        Count=0;
+        return false;
+    }
+    // int8_t delta = CountHall1-CountHall2;
+    // if (abs(delta)%2){ //delta 1
+    if (Hall1 ^ Hall2) {
+        if (MasterHall!=TriggerHall){
+            Count--;
+        }
+    }else { //delta 0
+        if (MasterHall != TriggerHall){
+            Count++;
+        }
+    }
+    if (Count == -1) {
+        Count = 0;
+        MasterHall = TriggerHall;
+    }
+    TriggerHall = 0;
+    return true;
 }
 
 bool isPressed(uint8_t pin){
