@@ -29,17 +29,10 @@ uint8_t Count_modes[] = {65, 45, 10};
 #define PAUSE 2
 #define DONE 3
 
-#define DIRECT true
-#define REVERS !DIRECT
-
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 uint8_t Desired_value = 0;
 int16_t Count = 0;
-volatile bool Hall1 = false;
-volatile bool Hall2 = false;
-volatile int8_t TriggerHall = 0;
 uint8_t Mode = STANDBY;
-int8_t MasterHall = 0;
 
 
 void showButtons(){
@@ -65,10 +58,9 @@ void showStopBtnOnly(){
 }
 
 void refreshCounts(){
-  int8_t pos = (int)log10(Count);
   lcd.setCursor(8,0);
   lcd.print("   ");
-  lcd.setCursor(11-pos,0);
+  lcd.setCursor(8,0);
   lcd.print(Count);
 }
 
@@ -79,8 +71,7 @@ void lcdStartup(){
 }
 
 void startMode(uint8_t count){
-  MasterHall = Count = 0;
-  Hall1 = Hall2 = false;
+  Count = 0;
   lcd.clear();
   lcd.print("RUNNING ");
   refreshCounts();
@@ -161,9 +152,12 @@ void setup() {
    if (isPressed(PLAYPAUSE_BTN_PIN) ){
     setupMode();
    }
+   if ( isPressed(COUNT1_BTN_PIN) || isPressed(COUNT2_BTN_PIN) ){
+    changeMasterHall();
+   }
 
-   attachInterrupt( digitalPinToInterrupt(HALL_SENS1_PIN), hall1Handler, RISING);
-   attachInterrupt( digitalPinToInterrupt(HALL_SENS2_PIN), hall2Handler, RISING);
+   uint8_t masterHall = getMasHallEEPROM();
+   attachInterrupt( digitalPinToInterrupt(masterHall), hallHandler, RISING);
    
    lcdStartup();
 }
@@ -187,8 +181,6 @@ void loop() {
     checkSelectMode();
     if ( isPressed(PLAYPAUSE_BTN_PIN) ){
       Count=0;
-      MasterHall = 0; 
-      Hall1 = Hall2 = false;
       refreshCounts();
     }
   }
@@ -212,46 +204,23 @@ void loop() {
     if (isNewCounters()){
       refreshCounts();
     }
+    if ( isPressed(PLAYPAUSE_BTN_PIN) ) Count=0;
     checkSelectMode();
   }
   
 }
 
-void hall1Handler(){ 
-  Hall1=!Hall1;
-  TriggerHall =1;
-}
-void hall2Handler(){
-  // CountHall2++;
-  Hall2=!Hall2;
-  TriggerHall =2;
+void hallHandler(){ 
+  Count++;
 }
 
 bool isNewCounters(){
-    if (!TriggerHall) return false;
-    if (!MasterHall){
-        MasterHall = TriggerHall;
-        TriggerHall=0;
-        Count=0;
-        return false;
+    static int16_t count = 0;
+    if (Count != count){
+      count = Count;
+      return true;
     }
-    // int8_t delta = CountHall1-CountHall2;
-    // if (abs(delta)%2){ //delta 1
-    if (Hall1 ^ Hall2) {
-        if (MasterHall!=TriggerHall){
-            Count--;
-        }
-    }else { //delta 0
-        if (MasterHall != TriggerHall){
-            Count++;
-        }
-    }
-    if (Count == -1) {
-        Count = 0;
-        MasterHall = TriggerHall;
-    }
-    TriggerHall = 0;
-    return true;
+    return false;
 }
 
 bool isPressed(uint8_t pin){
@@ -277,11 +246,24 @@ void getModesEEPROM(){
   }
 }
 
+uint8_t getMasHallEEPROM(){
+  uint8_t value = 0;
+  EEPROM.get(3, value);
+  if (value == HALL_SENS1_PIN || value == HALL_SENS2_PIN)
+    return value;
+  else 
+    return HALL_SENS1_PIN;
+}
+
 bool saveModesEEPROM(){
   return (bool)EEPROM.put(0, Count_modes);
 }
 
-void setupMode(){
+void saveMasHallEEPROM(uint8_t channel){
+  EEPROM.update(3, channel);
+}
+
+void setupMode(){  
   lcd.clear();
   lcd.print("SETUP choose btn");
   showButtons();
@@ -352,4 +334,17 @@ bool waitToKeyUp(uint8_t inMode){
   if (inMode==3){
     while(isPressed(COUNT3_BTN_PIN));
   }
+}
+
+void changeMasterHall(){
+  uint8_t channel = 0;
+  if( isPressed(COUNT1_BTN_PIN) ) channel = HALL_SENS1_PIN;
+  if( isPressed(COUNT2_BTN_PIN) ) channel = HALL_SENS2_PIN;
+  if (channel){
+    saveMasHallEEPROM(channel);
+    lcd.clear();
+    lcd.print("Hall will use #");
+    lcd.print(channel-1);
+  }
+  while ( isPressed(COUNT1_BTN_PIN) || isPressed(COUNT2_BTN_PIN) ) delay(BTN_DELAY);
 }
